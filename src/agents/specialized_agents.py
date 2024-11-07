@@ -1,78 +1,156 @@
 from typing import Dict, List
-import openai
-import streamlit as st
-from .prompts import (
-    ORGANIZATION_PROMPTS,
-    BUDGET_PROMPTS,
-    WRITING_PROMPTS,
-    DATA_PROMPTS,
-    TEAM_PROMPTS
-)
+import os
+from dotenv import load_dotenv
+from .openai_client import OpenAIClient
+
+load_dotenv()
 
 class BaseAgent:
-    def __init__(self):
-        self.openai_client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        self.nvidia_api_key = st.secrets["NVIDIA_API_KEY"]
+    def __init__(self, openai_client: OpenAIClient):
+        self.client = openai_client
     
-    async def _get_completion(self, prompt: str, temperature: float = 0.7) -> str:
+    def _extract_score(self, analysis: str) -> float:
         try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            st.error(f"API Error: {str(e)}")
-            return None
+            # Look for score patterns like "Score: 8.5/10" or "Rating: 85%"
+            import re
+            score_match = re.search(r'(?:Score|Rating):\s*(\d+(?:\.\d+)?)', analysis)
+            if score_match:
+                return float(score_match.group(1))
+            return 0.0
+        except:
+            return 0.0
+
+    def _extract_recommendations(self, analysis: str) -> List[str]:
+        try:
+            # Extract recommendations section
+            import re
+            recommendations = re.findall(r'(?:Recommendation|Suggestion):\s*(.*?)(?:\n|$)', analysis)
+            return recommendations
+        except:
+            return []
 
 class OrganizationAnalyzer(BaseAgent):
     async def analyze(self, data: Dict) -> Dict:
-        analysis = {
-            "mission_alignment": await self._analyze_mission_alignment(data),
-            "org_capacity": await self._analyze_capacity(data),
-            "track_record": await self._analyze_track_record(data),
-            "recommendations": []
-        }
-        return self._compile_results(analysis)
-    
-    async def _analyze_mission_alignment(self, data: Dict) -> Dict:
-        prompt = ORGANIZATION_PROMPTS["mission_alignment"].format(
-            mission=data.get("mission", ""),
-            project=data.get("project_description", "")
-        )
-        response = await self._get_completion(prompt)
-        return {"score": self._extract_score(response), "details": response}
+        messages = [
+            {
+                "role": "system",
+                "content": """Analyze the organization's grant proposal with these steps:
+                1. Mission Alignment Analysis
+                2. Capacity Assessment
+                3. Track Record Evaluation
+                4. Impact Potential
+                5. Recommendations"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+                Organization: {data.get('organizationName', '')}
+                Mission: {data.get('mission', '')}
+                Project: {data.get('projectTitle', '')}
+                Description: {data.get('projectDescription', '')}
+                """
+            }
+        ]
+        
+        analysis = await self.client.chain_of_thought(messages)
+        return self._parse_analysis(analysis)
 
 class BudgetPlanner(BaseAgent):
     async def analyze(self, data: Dict) -> Dict:
-        budget_data = data.get("budget", {})
-        analysis = {
-            "cost_effectiveness": await self._analyze_cost_effectiveness(budget_data),
-            "allocation": await self._analyze_allocation(budget_data),
-            "justification": await self._analyze_justification(budget_data),
-            "recommendations": []
-        }
-        return self._compile_results(analysis)
+        messages = [
+            {
+                "role": "system",
+                "content": """Analyze the budget proposal with these steps:
+                1. Cost Breakdown Analysis
+                2. Budget Justification Review
+                3. Cost-Effectiveness Assessment
+                4. Financial Sustainability
+                5. Budget Recommendations"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+                Total Budget: {data.get('budget', {}).get('total', '')}
+                Breakdown: {data.get('budget', {}).get('breakdown', [])}
+                Timeline: {data.get('timeline', {})}
+                """
+            }
+        ]
+        
+        analysis = await self.client.chain_of_thought(messages)
+        return self._parse_analysis(analysis)
 
 class WritingEnhancer(BaseAgent):
     async def analyze(self, data: Dict) -> Dict:
-        text = data.get("proposal_text", "")
-        analysis = {
-            "clarity": await self._analyze_clarity(text),
-            "impact": await self._analyze_impact(text),
-            "suggestions": await self._generate_improvements(text),
-            "enhanced_version": await self._enhance_text(text)
-        }
-        return self._compile_results(analysis)
+        messages = [
+            {
+                "role": "system",
+                "content": """Enhance the grant writing with these steps:
+                1. Clarity Assessment
+                2. Impact Statement Analysis
+                3. Technical Language Review
+                4. Narrative Flow Evaluation
+                5. Writing Recommendations"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+                Project Description: {data.get('projectDescription', '')}
+                Methodology: {data.get('methodology', '')}
+                Expected Outcomes: {data.get('outcomes', '')}
+                """
+            }
+        ]
+        
+        analysis = await self.client.chain_of_thought(messages)
+        return self._parse_analysis(analysis)
 
 class DataAnalyzer(BaseAgent):
     async def analyze(self, data: Dict) -> Dict:
-        preliminary_data = data.get("preliminary_data", "")
-        analysis = {
-            "data_quality": await self._analyze_data_quality(preliminary_data),
-            "evidence_strength": await self._analyze_evidence(preliminary_data),
-            "gaps": await self._identify_gaps(preliminary_data),
-            "recommendations": []
-        }
-        return self._compile_results(analysis)
+        messages = [
+            {
+                "role": "system",
+                "content": """Analyze the preliminary data with these steps:
+                1. Data Quality Assessment
+                2. Statistical Significance
+                3. Methodology Review
+                4. Results Interpretation
+                5. Data Recommendations"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+                Preliminary Data: {data.get('preliminaryData', '')}
+                Methodology: {data.get('methodology', '')}
+                Expected Results: {data.get('expectedResults', '')}
+                """
+            }
+        ]
+        
+        analysis = await self.client.chain_of_thought(messages)
+        return self._parse_analysis(analysis)
+
+class TeamEvaluator(BaseAgent):
+    async def analyze(self, data: Dict) -> Dict:
+        messages = [
+            {
+                "role": "system",
+                "content": """Evaluate the team composition with these steps:
+                1. Expertise Assessment
+                2. Role Distribution Analysis
+                3. Track Record Review
+                4. Collaboration Potential
+                5. Team Recommendations"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+                Team Members: {data.get('teamMembers', [])}
+                Project Scope: {data.get('projectDescription', '')}
+                Timeline: {data.get('timeline', {})}
+                """
+            }
+        ]
+        
+        analysis = await self.client.chain_of_thought(messages)
+        return self._parse_analysis(analysis)

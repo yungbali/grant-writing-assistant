@@ -1,5 +1,7 @@
 from typing import Dict, List
-import streamlit as st
+import os
+from dotenv import load_dotenv
+from .openai_client import OpenAIClient
 from .specialized_agents import (
     OrganizationAnalyzer,
     BudgetPlanner,
@@ -8,28 +10,44 @@ from .specialized_agents import (
     TeamEvaluator
 )
 
+load_dotenv()
+
 class MasterAgent:
     def __init__(self):
+        self.openai_client = OpenAIClient()
         self.agents = {
-            'organization': OrganizationAnalyzer(),
-            'budget': BudgetPlanner(),
-            'writing': WritingEnhancer(),
-            'data': DataAnalyzer(),
-            'team': TeamEvaluator()
+            'organization': OrganizationAnalyzer(self.openai_client),
+            'budget': BudgetPlanner(self.openai_client),
+            'writing': WritingEnhancer(self.openai_client),
+            'data': DataAnalyzer(self.openai_client),
+            'team': TeamEvaluator(self.openai_client)
         }
-        
+    
     async def coordinate(self, task: str, data: Dict) -> Dict:
-        """Coordinates between different specialized agents"""
+        """Coordinates between different specialized agents using chain of thought"""
         st.session_state.agent_status = 'working'
         
         if task == 'full_review':
             results = {}
+            thought_chain = []
+            
             for agent_name, agent in self.agents.items():
-                with st.status(f"🤖 {agent_name.title()} Agent Working...", expanded=True):
-                    results[agent_name] = await agent.analyze(data)
+                with st.status(f"🤖 {agent_name.title()} Agent Analyzing...", expanded=True):
+                    # Get agent analysis
+                    analysis = await agent.analyze(data)
+                    results[agent_name] = analysis
+                    
+                    # Add to thought chain
+                    thought_chain.append({
+                        "role": "assistant",
+                        "content": f"Analysis from {agent_name} agent:\n{analysis}"
+                    })
+                    
                     st.write(f"✅ {agent_name.title()} analysis complete")
             
-            return self._synthesize_results(results)
+            # Final synthesis using chain of thought
+            synthesis = await self._synthesize_results(results, thought_chain)
+            return synthesis
         
         # Single agent tasks
         agent = self.agents.get(task)
@@ -38,21 +56,20 @@ class MasterAgent:
         
         return {"error": "Invalid task specified"}
 
-    def _synthesize_results(self, results: Dict) -> Dict:
-        """Combines results from multiple agents into a cohesive response"""
-        synthesis = {
-            "overall_score": 0,
-            "recommendations": [],
-            "critical_issues": [],
-            "improvements": []
+    async def _synthesize_results(self, results: Dict, thought_chain: List) -> Dict:
+        """Synthesizes results using chain of thought reasoning"""
+        synthesis_prompt = {
+            "role": "system",
+            "content": """Synthesize the analyses from different agents into a cohesive review. 
+            Consider how different aspects interact and impact each other."""
         }
         
-        # Combine scores and recommendations
-        for result in results.values():
-            synthesis["overall_score"] += result.get("score", 0)
-            synthesis["recommendations"].extend(result.get("recommendations", []))
-            synthesis["critical_issues"].extend(result.get("critical_issues", []))
-            synthesis["improvements"].extend(result.get("improvements", []))
+        thought_chain.insert(0, synthesis_prompt)
         
-        synthesis["overall_score"] /= len(results)
-        return synthesis 
+        final_synthesis = await self.openai_client.chain_of_thought(thought_chain)
+        
+        return {
+            "overall_analysis": final_synthesis,
+            "individual_results": results,
+            "thought_process": thought_chain
+        }
