@@ -1,6 +1,7 @@
 from typing import Dict, List
 import os
 from dotenv import load_dotenv
+import streamlit as st
 from .openai_client import OpenAIClient
 from .specialized_agents import (
     OrganizationAnalyzer,
